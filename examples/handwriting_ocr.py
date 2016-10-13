@@ -47,7 +47,7 @@ import numpy as np
 from scipy import ndimage
 from keras import backend as K
 from keras.layers.convolutional import Convolution2D, MaxPooling2D
-from keras.layers import Input, Layer, Dense, Activation, Flatten, Dropout, BatchNormalization
+from keras.layers import Input, Layer, Dense, Activation, Flatten
 from keras.layers import Reshape, Lambda, merge, Permute, TimeDistributed
 from keras.models import Model
 from keras.layers.recurrent import GRU
@@ -59,29 +59,23 @@ import keras.callbacks
 import math, glob, sys, os, re
 from PIL import Image, ImageChops
 import PIL.ImageOps
-import tensorflow as tf
 
-#K.set_learning_phase(0)
 OUTPUT_DIR = "image_ocr"
 
 np.random.seed(55)
 
-image_height = 56
-image_width = 512 # int(sys.argv[1]) # 1024
+image_height = 64
+image_width = 1024 # int(sys.argv[1]) # 1024
 
 trimBg = Image.new('L', (3000,1000), 255)
 inputAvg = 255/2.
 inputStd = 255/2.
 
 
-# this creates larger "blotches" of noise which look
-# more realistic than just adding gaussian noise
-# assumes greyscale with pixels ranging from 0 to 1
-
 def speckle(img):
   severity = np.random.uniform(0, 0.6)
   blur = ndimage.gaussian_filter(np.random.randn(*img.shape) * severity, 1)
-  img_speck = (img + (blur * (img != 0)))
+  img_speck = (img + (blur * (img != 1)))
   img_speck[img_speck > 1] = 1
   img_speck[img_speck <= 0] = 0
   return img_speck
@@ -125,17 +119,14 @@ class TextImageGenerator(keras.callbacks.Callback):
     image = image.crop(ImageChops.difference(image, trimBg).getbbox())
     imageWidth = int(image.size[0] / float(image.size[1]) * image_height)
     self.max_image_width = max(self.max_image_width, imageWidth)
-    imageWidth = min(imageWidth, image_width)
-    image = image.resize((imageWidth, image_height))
-    image = PIL.ImageOps.invert(image)
+    image = image.resize((image_width, image_height))
     if isTrain:
-      image = image.rotate(np.random.uniform(-5, 5))
-    standard_image = np.zeros((image_height, image_width), dtype = np.uint8)
-    x = 0 #int(np.random.uniform(0, (image_width - imageWidth)))
-    standard_image[:, x:(x+imageWidth)] = image
-    inputs = (standard_image - inputAvg) / inputStd
-    if isTrain:
-      inputs = speckle(inputs)
+      image = PIL.ImageOps.invert(image)
+      image = image.rotate(np.random.uniform(-1, 1))
+      image = PIL.ImageOps.invert(image)
+    inputs = (np.array(image) - inputAvg) / inputStd
+    # if isTrain:
+    #   inputs = speckle(inputs)
     return inputs
 
   def read_one_dataset(self, dataset):
@@ -228,7 +219,7 @@ class TextImageGenerator(keras.callbacks.Callback):
         X_data[i, :, :, 0] = inputs
       label_len = len(data[index][2])
       labels[i, :label_len] = data[index][1]
-      input_length[i] = self.downsample_width
+      input_length[i] = self.downsample_width - 2 # why?
       label_length[i] = label_len
       source_str.append(data[index][2])
 
@@ -270,7 +261,7 @@ def ctc_lambda_func(args):
   y_pred, labels, input_length, label_length = args
   # the 2 is critical here since the first couple outputs of the RNN
   # tend to be garbage:
-  y_pred = y_pred[:, :, :]
+  y_pred = y_pred[:, 2:, :]
   return K.ctc_batch_cost(labels, y_pred, input_length, label_length)
 
 
@@ -278,10 +269,10 @@ def ctc_lambda_func(args):
 # and language model.  For this example, best path is sufficient.
 
 def decode_batch(test_func, word_batch, ordered_chars):
-  out = test_func([word_batch, 0])[0]
+  out = test_func([word_batch])[0]
   ret = []
   for j in range(out.shape[0]):
-    out_best = list(np.argmax(out[j, :], 1))
+    out_best = list(np.argmax(out[j, 2:], 1))
     out_best = [k for k, g in itertools.groupby(out_best)]
     # 26 is space, 27 is CTC blank char
     outstr = ''
@@ -329,15 +320,17 @@ class VizCallback(keras.callbacks.Callback):
     for i in range(self.num_display_words):
       print('Truth = \'%s\' Decoded = \'%s\'' % (word_batch['source_str'][i], res[i]))
 
-
 # Input Parameters
-nb_epoch = 500
-minibatch_size = 64
+nb_epoch = 200
+minibatch_size = 32
+words_per_epoch = 16000
+val_split = 0.2
+val_words = int(words_per_epoch * (val_split))
 
 # Network parameters
 conv_num_filters = 16
 filter_size = 3
-pool_size_1 = 2
+pool_size_1 = 4
 pool_size_2 = 2
 time_dense_size = 32
 rnn_size = 512
@@ -356,12 +349,9 @@ input_data = Input(name='the_input', shape=input_shape, dtype='float32')
 inner = Convolution2D(conv_num_filters, filter_size, filter_size, border_mode='same',
                       activation=act, name='conv1')(input_data)
 inner = MaxPooling2D(pool_size=(pool_size_1, pool_size_1), name='max1')(inner)
-#inner = BatchNormalization()(inner)
 inner = Convolution2D(conv_num_filters, filter_size, filter_size, border_mode='same',
                       activation=act, name='conv2')(inner)
 inner = MaxPooling2D(pool_size=(pool_size_2, pool_size_2), name='max2')(inner)
-#inner = BatchNormalization()(inner)
-
 inner = Permute(dims=(2, 1, 3), name='permute')(inner)
 
 conv_to_rnn_dims = (image_width / (pool_size_1 * pool_size_2), (image_height / (pool_size_1 * pool_size_2)) * conv_num_filters)
@@ -369,16 +359,14 @@ inner = Reshape(target_shape=conv_to_rnn_dims, name='reshape')(inner)
 
 # cuts down input size going into RNN:
 inner = TimeDistributed(Dense(time_dense_size, activation=act, name='dense1'))(inner)
-#inner = Dropout(0.25)(inner)
 
 # Two layers of bidirecitonal GRUs
 # GRU seems to work as well, if not better than LSTM:
-gru_1 = GRU(rnn_size, return_sequences=True, name='gru1')(inner) # , dropout_W = 0.1, dropout_U = 0.1
-gru_1b = GRU(rnn_size, return_sequences=True, go_backwards=True, name='gru1_b')(inner) # , dropout_W = 0.1, dropout_U = 0.1
+gru_1 = GRU(rnn_size, return_sequences=True, name='gru1')(inner)
+gru_1b = GRU(rnn_size, return_sequences=True, go_backwards=True, name='gru1_b')(inner)
 gru1_merged = merge([gru_1, gru_1b], mode='sum')
-
-gru_2 = GRU(rnn_size, return_sequences=True, name='gru2')(gru1_merged) #, dropout_W = 0.1, dropout_U = 0.1
-gru_2b = GRU(rnn_size, return_sequences=True, go_backwards=True)(gru1_merged) # , dropout_W = 0.1, dropout_U = 0.1
+gru_2 = GRU(rnn_size, return_sequences=True, name='gru2')(gru1_merged)
+gru_2b = GRU(rnn_size, return_sequences=True, go_backwards=True)(gru1_merged)
 
 # transforms RNN output to character activations:
 inner = TimeDistributed(Dense(iam.get_output_size(), name='dense2'))(merge([gru_2, gru_2b], mode='concat'))
@@ -404,7 +392,7 @@ model.summary()
 model.compile(loss={'ctc': lambda y_true, y_pred: y_pred}, optimizer=sgd)
 
 # captures output of softmax so we can decode the output during visualization
-test_func = K.function([input_data, K.learning_phase()], [y_pred])
+test_func = K.function([input_data], [y_pred])
 
 viz_cb = VizCallback(test_func, iam.next_val(), ordered_chars = iam.get_ordered_chars())
 
