@@ -47,7 +47,7 @@ import numpy as np
 from scipy import ndimage
 from keras import backend as K
 from keras.layers.convolutional import Convolution2D, MaxPooling2D
-from keras.layers import Input, Layer, Dense, Activation, Flatten
+from keras.layers import Input, Layer, Dense, Activation, Flatten, Dropout, BatchNormalization
 from keras.layers import Reshape, Lambda, merge, Permute, TimeDistributed
 from keras.models import Model
 from keras.layers.recurrent import GRU
@@ -269,7 +269,7 @@ def ctc_lambda_func(args):
 # and language model.  For this example, best path is sufficient.
 
 def decode_batch(test_func, word_batch, ordered_chars):
-  out = test_func([word_batch])[0]
+  out = test_func([word_batch, 0])[0]
   ret = []
   for j in range(out.shape[0]):
     out_best = list(np.argmax(out[j, 2:], 1))
@@ -360,6 +360,8 @@ inner = Reshape(target_shape=conv_to_rnn_dims, name='reshape')(inner)
 # cuts down input size going into RNN:
 inner = TimeDistributed(Dense(time_dense_size, activation=act, name='dense1'))(inner)
 
+inner = Dropout(0.25)(inner)
+
 # Two layers of bidirecitonal GRUs
 # GRU seems to work as well, if not better than LSTM:
 gru_1 = GRU(rnn_size, return_sequences=True, name='gru1')(inner)
@@ -392,7 +394,7 @@ model.summary()
 model.compile(loss={'ctc': lambda y_true, y_pred: y_pred}, optimizer=sgd)
 
 # captures output of softmax so we can decode the output during visualization
-test_func = K.function([input_data], [y_pred])
+test_func = K.function([input_data, K.learning_phase()], [y_pred])
 
 viz_cb = VizCallback(test_func, iam.next_val(), ordered_chars = iam.get_ordered_chars())
 
