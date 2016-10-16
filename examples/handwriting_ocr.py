@@ -169,7 +169,7 @@ class TextImageGenerator(keras.callbacks.Callback):
   # as max_string_len grows, num_words can grow
   def read_iam(self):
 
-    self.lables = {}
+    self.labels = {}
     print "Loading labels"
     for fileName in glob.glob('ascii/*/*/*.txt'):
       asciiFile = open(fileName, 'r')
@@ -366,8 +366,8 @@ inner = Dropout(0.25)(inner)
 
 # Two layers of bidirecitonal GRUs
 # GRU seems to work as well, if not better than LSTM:
-gru_1 = GRU(rnn_size, return_sequences=True, name='gru1')(inner)
-gru_1b = GRU(rnn_size, return_sequences=True, go_backwards=True, name='gru1_b')(inner)
+gru_1 = GRU(rnn_size, return_sequences=True, name='gru1', dropout_W = 0.1, dropout_U = 0.1)(inner)
+gru_1b = GRU(rnn_size, return_sequences=True, go_backwards=True, name='gru1_b', dropout_W = 0.1, dropout_U = 0.1)(inner)
 gru1_merged = merge([gru_1, gru_1b], mode='sum')
 gru_2 = GRU(rnn_size, return_sequences=True, name='gru2')(gru1_merged)
 gru_2b = GRU(rnn_size, return_sequences=True, go_backwards=True)(gru1_merged)
