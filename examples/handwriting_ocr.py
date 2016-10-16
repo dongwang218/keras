@@ -64,7 +64,7 @@ OUTPUT_DIR = "image_ocr"
 
 np.random.seed(55)
 
-image_height = 64
+image_height = 128
 image_width = 1024 # int(sys.argv[1]) # 1024
 
 trimBg = Image.new('L', (3000,1000), 255)
@@ -116,14 +116,14 @@ class TextImageGenerator(keras.callbacks.Callback):
   def read_image(self, imagePath, isTrain):
     # Load all stroke points for the current line as inputs
     image = Image.open(imagePath)
+    if isTrain:
+      image = PIL.ImageOps.invert(image)
+      image = image.rotate(np.random.uniform(-5, 5))
+      image = PIL.ImageOps.invert(image)
     image = image.crop(ImageChops.difference(image, trimBg).getbbox())
     imageWidth = int(image.size[0] / float(image.size[1]) * image_height)
     self.max_image_width = max(self.max_image_width, imageWidth)
     image = image.resize((image_width, image_height))
-    if isTrain:
-      image = PIL.ImageOps.invert(image)
-      image = image.rotate(np.random.uniform(-1, 1))
-      image = PIL.ImageOps.invert(image)
     inputs = (np.array(image) - inputAvg) / inputStd
     # if isTrain:
     #   inputs = speckle(inputs)
@@ -349,9 +349,11 @@ input_data = Input(name='the_input', shape=input_shape, dtype='float32')
 inner = Convolution2D(conv_num_filters, filter_size, filter_size, border_mode='same',
                       activation=act, name='conv1')(input_data)
 inner = MaxPooling2D(pool_size=(pool_size_1, pool_size_1), name='max1')(inner)
+inner = BatchNormalization()(inner)
 inner = Convolution2D(conv_num_filters, filter_size, filter_size, border_mode='same',
                       activation=act, name='conv2')(inner)
 inner = MaxPooling2D(pool_size=(pool_size_2, pool_size_2), name='max2')(inner)
+inner = BatchNormalization()(inner)
 inner = Permute(dims=(2, 1, 3), name='permute')(inner)
 
 conv_to_rnn_dims = (image_width / (pool_size_1 * pool_size_2), (image_height / (pool_size_1 * pool_size_2)) * conv_num_filters)
