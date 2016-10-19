@@ -59,13 +59,13 @@ import keras.callbacks
 import math, glob, sys, os, re
 from PIL import Image, ImageChops
 import PIL.ImageOps
-
-OUTPUT_DIR = "image_ocr"
+import argparse
 
 np.random.seed(55)
 
-image_height = 128
+image_height = 64 #128
 image_width = 1024 # int(sys.argv[1]) # 1024
+output_size = 85
 
 trimBg = Image.new('L', (3000,1000), 255)
 inputAvg = 255/2.
@@ -79,6 +79,23 @@ def speckle(img):
   img_speck[img_speck > 1] = 1
   img_speck[img_speck <= 0] = 0
   return img_speck
+
+def read_image(imagePath, isTrain, keep_aspect = False):
+  # Load all stroke points for the current line as inputs
+  image = Image.open(imagePath)
+  if isTrain:
+    image = PIL.ImageOps.invert(image)
+    image = image.rotate(np.random.uniform(-5, 5))
+    image = PIL.ImageOps.invert(image)
+  image = image.crop(ImageChops.difference(image, trimBg).getbbox())
+  imageWidth = int(image.size[0] / float(image.size[1]) * image_height)
+  #self.max_image_width = max(self.max_image_width, imageWidth)
+  width = imageWidth if keep_aspect else image_width
+  image = image.resize((width, image_height))
+  inputs = (np.array(image) - inputAvg) / inputStd
+  # if isTrain:
+  #   inputs = speckle(inputs)
+  return inputs
 
 # Uses generator functions to supply train/test with
 # data. Image renderings are text are created on the fly
@@ -112,22 +129,6 @@ class TextImageGenerator(keras.callbacks.Callback):
   def get_ordered_chars(self):
     chars = sorted(self.labels.items(), key = lambda x: x[1])
     return [x[0] for x in chars] + [' ']
-
-  def read_image(self, imagePath, isTrain):
-    # Load all stroke points for the current line as inputs
-    image = Image.open(imagePath)
-    if isTrain:
-      image = PIL.ImageOps.invert(image)
-      image = image.rotate(np.random.uniform(-5, 5))
-      image = PIL.ImageOps.invert(image)
-    image = image.crop(ImageChops.difference(image, trimBg).getbbox())
-    imageWidth = int(image.size[0] / float(image.size[1]) * image_height)
-    self.max_image_width = max(self.max_image_width, imageWidth)
-    image = image.resize((image_width, image_height))
-    inputs = (np.array(image) - inputAvg) / inputStd
-    # if isTrain:
-    #   inputs = speckle(inputs)
-    return inputs
 
   def read_one_dataset(self, dataset):
     print('reading %s' % dataset)
@@ -179,8 +180,9 @@ class TextImageGenerator(keras.callbacks.Callback):
         if char not in self.labels:
           self.labels[char] = len(self.labels)
         asciiFile.close()
+    assert(len(self.labels)+1 == output_size)
 
-    self.trainset = self.read_one_dataset('trainset')
+    self.trainset = read_one_dataset('trainset')
     self.valset = self.read_one_dataset('testset_v') + self.read_one_dataset('testset_t')
     self.testset = self.read_one_dataset('testset_f')
     print('iam: max_line_length %s, max_image_width %s' % (self.max_line_length, self.max_image_width))
@@ -219,7 +221,7 @@ class TextImageGenerator(keras.callbacks.Callback):
         X_data[i, :, :, 0] = inputs
       label_len = len(data[index][2])
       labels[i, :label_len] = data[index][1]
-      input_length[i] = self.downsample_width - 2 # why?
+      input_length[i] = self.downsample_width
       label_length[i] = label_len
       source_str.append(data[index][2])
 
@@ -261,7 +263,7 @@ def ctc_lambda_func(args):
   y_pred, labels, input_length, label_length = args
   # the 2 is critical here since the first couple outputs of the RNN
   # tend to be garbage:
-  y_pred = y_pred[:, 2:, :]
+  y_pred = y_pred[:, :, :]
   return K.ctc_batch_cost(labels, y_pred, input_length, label_length)
 
 
@@ -269,10 +271,10 @@ def ctc_lambda_func(args):
 # and language model.  For this example, best path is sufficient.
 
 def decode_batch(test_func, word_batch, ordered_chars):
-  out = test_func([word_batch, 0])[0]
+  out = test_func([word_batch, 0])[0] if test_func else word_batch
   ret = []
   for j in range(out.shape[0]):
-    out_best = list(np.argmax(out[j, 2:], 1))
+    out_best = list(np.argmax(out[j, :], 1))
     out_best = [k for k, g in itertools.groupby(out_best)]
     # 26 is space, 27 is CTC blank char
     outstr = ''
@@ -284,11 +286,10 @@ def decode_batch(test_func, word_batch, ordered_chars):
 
 class VizCallback(keras.callbacks.Callback):
 
-  def __init__(self, test_func, text_img_gen, ordered_chars, num_display_words=6):
+  def __init__(self, test_func, text_img_gen, ordered_chars, output_dir, num_display_words=6):
     self.ordered_chars = ordered_chars
     self.test_func = test_func
-    self.output_dir = os.path.join(
-        OUTPUT_DIR, str(int(time.time())))
+    self.output_dir = output_dir
     self.text_img_gen = text_img_gen
     self.num_display_words = num_display_words
     os.makedirs(self.output_dir)
@@ -320,13 +321,6 @@ class VizCallback(keras.callbacks.Callback):
     for i in range(self.num_display_words):
       print('Truth = \'%s\' Decoded = \'%s\'' % (word_batch['source_str'][i], res[i]))
 
-# Input Parameters
-nb_epoch = 200
-minibatch_size = 32
-words_per_epoch = 16000
-val_split = 0.2
-val_words = int(words_per_epoch * (val_split))
-
 # Network parameters
 conv_num_filters = 16
 filter_size = 3
@@ -334,72 +328,104 @@ pool_size_1 = 4
 pool_size_2 = 2
 time_dense_size = 32
 rnn_size = 512
-time_steps = image_width / (pool_size_1 * pool_size_2)
 
-if K.image_dim_ordering() == 'th':
-  input_shape = (1, image_height, image_width)
-else:
-  input_shape = (image_height, image_width, 1)
+def create_model(image_width, image_height, dropout1 = 0, dropout2 = 0):
+  if K.image_dim_ordering() == 'th':
+    input_shape = (1, image_height, image_width)
+  else:
+    input_shape = (image_height, image_width, 1)
 
-iam = TextImageGenerator(time_steps, minibatch_size)
-iam.read_iam()
+  act = 'relu'
+  input_data = Input(name='the_input', shape=input_shape, dtype='float32')
+  inner = Convolution2D(conv_num_filters, filter_size, filter_size, border_mode='same',
+                        activation=act, name='conv1')(input_data)
+  inner = MaxPooling2D(pool_size=(pool_size_1, pool_size_1), name='max1')(inner)
+  inner = BatchNormalization()(inner)
+  inner = Convolution2D(conv_num_filters, filter_size, filter_size, border_mode='same',
+                        activation=act, name='conv2')(inner)
+  inner = MaxPooling2D(pool_size=(pool_size_2, pool_size_2), name='max2')(inner)
+  inner = BatchNormalization()(inner)
+  inner = Permute(dims=(2, 1, 3), name='permute')(inner)
 
-act = 'relu'
-input_data = Input(name='the_input', shape=input_shape, dtype='float32')
-inner = Convolution2D(conv_num_filters, filter_size, filter_size, border_mode='same',
-                      activation=act, name='conv1')(input_data)
-inner = MaxPooling2D(pool_size=(pool_size_1, pool_size_1), name='max1')(inner)
-inner = BatchNormalization()(inner)
-inner = Convolution2D(conv_num_filters, filter_size, filter_size, border_mode='same',
-                      activation=act, name='conv2')(inner)
-inner = MaxPooling2D(pool_size=(pool_size_2, pool_size_2), name='max2')(inner)
-inner = BatchNormalization()(inner)
-inner = Permute(dims=(2, 1, 3), name='permute')(inner)
+  conv_to_rnn_dims = (image_width / (pool_size_1 * pool_size_2), (image_height / (pool_size_1 * pool_size_2)) * conv_num_filters)
+  inner = Reshape(target_shape=conv_to_rnn_dims, name='reshape')(inner)
 
-conv_to_rnn_dims = (image_width / (pool_size_1 * pool_size_2), (image_height / (pool_size_1 * pool_size_2)) * conv_num_filters)
-inner = Reshape(target_shape=conv_to_rnn_dims, name='reshape')(inner)
+  # cuts down input size going into RNN:
+  inner = TimeDistributed(Dense(time_dense_size, activation=act, name='dense1'))(inner)
 
-# cuts down input size going into RNN:
-inner = TimeDistributed(Dense(time_dense_size, activation=act, name='dense1'))(inner)
+  inner = Dropout(dropout1)(inner)
 
-inner = Dropout(0.25)(inner)
+  # Two layers of bidirecitonal GRUs
+  # GRU seems to work as well, if not better than LSTM:
+  gru_1 = GRU(rnn_size, return_sequences=True, name='gru1', dropout_W = dropout2, dropout_U = dropout2)(inner)
+  gru_1b = GRU(rnn_size, return_sequences=True, go_backwards=True, name='gru1_b', dropout_W = dropout2, dropout_U = dropout2)(inner)
+  gru1_merged = merge([gru_1, gru_1b], mode='sum')
+  gru_2 = GRU(rnn_size, return_sequences=True, name='gru2', dropout_W = dropout2, dropout_U = dropout2)(gru1_merged)
+  gru_2b = GRU(rnn_size, return_sequences=True, go_backwards=True, dropout_W = dropout2, dropout_U = dropout2)(gru1_merged)
 
-# Two layers of bidirecitonal GRUs
-# GRU seems to work as well, if not better than LSTM:
-gru_1 = GRU(rnn_size, return_sequences=True, name='gru1', dropout_W = 0.1, dropout_U = 0.1)(inner)
-gru_1b = GRU(rnn_size, return_sequences=True, go_backwards=True, name='gru1_b', dropout_W = 0.1, dropout_U = 0.1)(inner)
-gru1_merged = merge([gru_1, gru_1b], mode='sum')
-gru_2 = GRU(rnn_size, return_sequences=True, name='gru2')(gru1_merged)
-gru_2b = GRU(rnn_size, return_sequences=True, go_backwards=True)(gru1_merged)
+  # transforms RNN output to character activations:
+  inner = TimeDistributed(Dense(output_size, name='dense2'))(merge([gru_2, gru_2b], mode='concat'))
+  y_pred = Activation('softmax', name='softmax')(inner)
+  return Model(input=[input_data], output=y_pred)
 
-# transforms RNN output to character activations:
-inner = TimeDistributed(Dense(iam.get_output_size(), name='dense2'))(merge([gru_2, gru_2b], mode='concat'))
-y_pred = Activation('softmax', name='softmax')(inner)
-Model(input=[input_data], output=y_pred).summary()
+if __name__ == '__main__':
 
-labels = Input(name='the_labels', shape=[iam.max_line_length], dtype='float32')
-input_length = Input(name='input_length', shape=[1], dtype='int64')
-label_length = Input(name='label_length', shape=[1], dtype='int64')
-# Keras doesn't currently support loss funcs with extra parameters
-# so CTC loss is implemented in a lambda layer
-loss_out = Lambda(ctc_lambda_func, output_shape=(1,), name="ctc")([y_pred, labels, input_length, label_length])
+  ap = argparse.ArgumentParser()
+  ap.add_argument("-e", "--epoch", type = int, default = 200,
+    help="num of epoch")
+  ap.add_argument("-i", "--input", type = string,
+    help="path to the input model")
+  ap.add_argument("-o", "--output", required=False, type = string,
+    help="output dir")
+  ap.add_argument("-l", "--learning", type = float, default = 0.03,
+    help="learning rate")
+  ap.add_argument("-d", "--decay", type = float, default = 3e-7,
+    help="learning rate decay")
+  ap.add_argument("--dropout1", type = float, default = 0.25,
+    help="dropout 1")
+  ap.add_argument("--dropout2", type = float, default = 0.1,
+    help="dropout 2")
+  args = vars(ap.parse_args())
 
-lr = 0.03
-# clipnorm seems to speeds up convergence
-clipnorm = 5
-sgd = SGD(lr=lr, decay=3e-7, momentum=0.9, nesterov=True, clipnorm=clipnorm)
+  # Input Parameters
+  nb_epoch = args['epoch']
+  minibatch_size = 64
 
-model = Model(input=[input_data, labels, input_length, label_length], output=[loss_out])
-model.summary()
+  time_steps = image_width / (pool_size_1 * pool_size_2)
+  iam = TextImageGenerator(time_steps, minibatch_size)
+  iam.read_iam()
 
-# the loss calc occurs elsewhere, so use a dummy lambda func for the loss
-model.compile(loss={'ctc': lambda y_true, y_pred: y_pred}, optimizer=sgd)
+  base_model = create_model(image_width, image_height, args['dropout1'], args['dropout2'])
+  if 'input' in args:
+    base_model.load_weights(args['input'])
 
-# captures output of softmax so we can decode the output during visualization
-test_func = K.function([input_data, K.learning_phase()], [y_pred])
+  input_data = base_model.input[0]
+  y_pred = base_model.output
 
-viz_cb = VizCallback(test_func, iam.next_val(), ordered_chars = iam.get_ordered_chars())
+  labels = Input(name='the_labels', shape=[iam.max_line_length], dtype='float32')
+  input_length = Input(name='input_length', shape=[1], dtype='int64')
+  label_length = Input(name='label_length', shape=[1], dtype='int64')
+  # Keras doesn't currently support loss funcs with extra parameters
+  # so CTC loss is implemented in a lambda layer
+  loss_out = Lambda(ctc_lambda_func, output_shape=(1,), name="ctc")([y_pred, labels, input_length, label_length])
 
-model.fit_generator(generator=iam.next_train(), samples_per_epoch=iam.get_num_trainset(),
-                    nb_epoch=nb_epoch, validation_data=iam.next_val(), nb_val_samples=iam.get_num_valset(),
-                    callbacks=[viz_cb, iam])
+  lr = args['learning']
+  decay = args['decay']
+  # clipnorm seems to speeds up convergence
+  clipnorm = 5
+  sgd = SGD(lr=lr, decay=decay, momentum=0.9, nesterov=True, clipnorm=clipnorm)
+
+  model = Model(input=[input_data, labels, input_length, label_length], output=[loss_out])
+  model.summary()
+
+  # the loss calc occurs elsewhere, so use a dummy lambda func for the loss
+  model.compile(loss={'ctc': lambda y_true, y_pred: y_pred}, optimizer=sgd)
+
+  # captures output of softmax so we can decode the output during visualization
+  test_func = K.function([input_data, K.learning_phase()], [y_pred])
+
+  viz_cb = VizCallback(test_func, iam.next_val(), ordered_chars = iam.get_ordered_chars(), output_dir = args['output'])
+
+  model.fit_generator(generator=iam.next_train(), samples_per_epoch=iam.get_num_trainset(),
+                      nb_epoch=nb_epoch, validation_data=iam.next_val(), nb_val_samples=iam.get_num_valset(),
+                      callbacks=[viz_cb, iam])
