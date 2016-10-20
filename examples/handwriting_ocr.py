@@ -1,38 +1,7 @@
-'''This example uses a convolutional stack followed by a recurrent stack
-and a CTC logloss function to perform optical character recognition
-of generated text images. I have no evidence of whether it actually
-learns general shapes of text, or just is able to recognize all
-the different fonts thrown at it...the purpose is more to demonstrate CTC
-inside of Keras.  Note that the font list may need to be updated
-for the particular OS in use.
+'''
+Train iam offline handwriting recognizer. Get val_loss: 18.1516
 
-This starts off with 4 letter words. After 10 or so epochs, CTC
-learns translational invariance, so longer words and groups of words
-with spaces are gradually fed in.  This gradual increase in difficulty
-is handled using the TextImageGenerator class which is both a generator
-class for test/train data and a Keras callback class. Every 10 epochs
-the wordlist that the generator draws from increases in difficulty.
-
-The table below shows normalized edit distance values. Theano uses
-a slightly different CTC implementation, so some Theano-specific
-hyperparameter tuning would be needed to get it to match Tensorflow.
-
-            Norm. ED
-Epoch |   TF   |   TH
-------------------------
-    10   0.072    0.272
-    20   0.032    0.115
-    30   0.024    0.098
-    40   0.023    0.108
-
-This requires cairo and editdistance packages:
-pip install cairocffi
-pip install editdistance
-
-Due to the use of a dummy loss function, Theano requires the following flags:
-on_unused_input='ignore'
-
-Created by Mike Henry
+based on the image_ocr example by Mike Henry
 https://github.com/mbhenry/
 '''
 
@@ -182,7 +151,7 @@ class TextImageGenerator(keras.callbacks.Callback):
         asciiFile.close()
     assert(len(self.labels)+1 == output_size)
 
-    self.trainset = read_one_dataset('trainset')
+    self.trainset = self.read_one_dataset('trainset')
     self.valset = self.read_one_dataset('testset_v') + self.read_one_dataset('testset_t')
     self.testset = self.read_one_dataset('testset_f')
     print('iam: max_line_length %s, max_image_width %s' % (self.max_line_length, self.max_image_width))
@@ -214,7 +183,7 @@ class TextImageGenerator(keras.callbacks.Callback):
         self.testset_index = (self.testset_index + 1) % len(self.testset)
         index = self.testset_index
 
-      inputs = self.read_image(data[index][0], train == 'train')
+      inputs = read_image(data[index][0], train == 'train')
       if K.image_dim_ordering() == 'th':
         X_data[i, 0, :, :] = inputs
       else:
@@ -373,9 +342,9 @@ if __name__ == '__main__':
   ap = argparse.ArgumentParser()
   ap.add_argument("-e", "--epoch", type = int, default = 200,
     help="num of epoch")
-  ap.add_argument("-i", "--input", type = string,
+  ap.add_argument("-i", "--input", type = str,
     help="path to the input model")
-  ap.add_argument("-o", "--output", required=False, type = string,
+  ap.add_argument("-o", "--output", required=True, type = str,
     help="output dir")
   ap.add_argument("-l", "--learning", type = float, default = 0.03,
     help="learning rate")
@@ -399,7 +368,7 @@ if __name__ == '__main__':
   if 'input' in args:
     base_model.load_weights(args['input'])
 
-  input_data = base_model.input[0]
+  input_data = base_model.input
   y_pred = base_model.output
 
   labels = Input(name='the_labels', shape=[iam.max_line_length], dtype='float32')
