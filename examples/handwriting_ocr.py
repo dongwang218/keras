@@ -49,23 +49,6 @@ def speckle(img):
   img_speck[img_speck <= 0] = 0
   return img_speck
 
-def read_image(imagePath, isTrain, keep_aspect = False):
-  # Load all stroke points for the current line as inputs
-  image = Image.open(imagePath)
-  if isTrain:
-    image = PIL.ImageOps.invert(image)
-    image = image.rotate(np.random.uniform(-5, 5))
-    image = PIL.ImageOps.invert(image)
-  image = image.crop(ImageChops.difference(image, trimBg).getbbox())
-  imageWidth = int(image.size[0] / float(image.size[1]) * image_height)
-  #self.max_image_width = max(self.max_image_width, imageWidth)
-  width = imageWidth if keep_aspect else image_width
-  image = image.resize((width, image_height))
-  inputs = (np.array(image) - inputAvg) / inputStd
-  # if isTrain:
-  #   inputs = speckle(inputs)
-  return inputs
-
 # Uses generator functions to supply train/test with
 # data. Image renderings are text are created on the fly
 # each time with random perturbations
@@ -149,12 +132,32 @@ class TextImageGenerator(keras.callbacks.Callback):
         if char not in self.labels:
           self.labels[char] = len(self.labels)
         asciiFile.close()
+    print('labels', self.labels)
     assert(len(self.labels)+1 == output_size)
 
     self.trainset = self.read_one_dataset('trainset')
     self.valset = self.read_one_dataset('testset_v') + self.read_one_dataset('testset_t')
     self.testset = self.read_one_dataset('testset_f')
     print('iam: max_line_length %s, max_image_width %s' % (self.max_line_length, self.max_image_width))
+
+  def read_image(self, imagePath, isTrain):
+    # Load all stroke points for the current line as inputs
+    image = Image.open(imagePath)
+    image = image.crop(ImageChops.difference(image, trimBg).getbbox())
+    imageWidth = int(image.size[0] / float(image.size[1]) * image_height)
+    self.max_image_width = max(self.max_image_width, imageWidth)
+    imageWidth = min(imageWidth, image_width)
+    image = image.resize((imageWidth, image_height))
+    image = PIL.ImageOps.invert(image)
+    if isTrain:
+      image = image.rotate(np.random.uniform(-5, 5))
+    standard_image = np.zeros((image_height, image_width), dtype = np.uint8)
+    x = 0 #int(np.random.uniform(0, (image_width - imageWidth)))
+    standard_image[:, x:(x+imageWidth)] = image
+    inputs = (standard_image - inputAvg) / inputStd
+    # if isTrain:
+    #   inputs = speckle(inputs)
+    return (inputs, imageWidth)
 
   # each time an image is requested from train/val/test, a new random
   # painting of the text is performed
@@ -169,7 +172,8 @@ class TextImageGenerator(keras.callbacks.Callback):
     label_length = np.zeros([size, 1])
     source_str = []
 
-    for i in range(0, size):
+    while len(source_str) < size:
+      i = len(source_str)
       if train == 'train':
         data = self.trainset
         self.trainset_index = (self.trainset_index + 1) % len(self.trainset)
@@ -183,14 +187,19 @@ class TextImageGenerator(keras.callbacks.Callback):
         self.testset_index = (self.testset_index + 1) % len(self.testset)
         index = self.testset_index
 
-      inputs = read_image(data[index][0], train == 'train')
+      inputs, width = self.read_image(data[index][0], train == 'train')
+      label_len = len(data[index][2])
+      data_len = int(math.ceil(width / self.downsample_width))
+      if data_len <= label_len:
+        print('Warning: image too short', data_len, label_len, data[index])
+        continue
+
       if K.image_dim_ordering() == 'th':
         X_data[i, 0, :, :] = inputs
       else:
         X_data[i, :, :, 0] = inputs
-      label_len = len(data[index][2])
       labels[i, :label_len] = data[index][1]
-      input_length[i] = self.downsample_width
+      input_length[i] = data_len
       label_length[i] = label_len
       source_str.append(data[index][2])
 
@@ -200,6 +209,7 @@ class TextImageGenerator(keras.callbacks.Callback):
               'label_length': label_length,
               'source_str': source_str}
     outputs = {'ctc': np.zeros([size])}  # dummy data for dummy loss function
+    #print('input_length', input_length, 'label_length', label_length)
     return (inputs, outputs)
 
   def next_train(self):
@@ -261,7 +271,8 @@ class VizCallback(keras.callbacks.Callback):
     self.output_dir = output_dir
     self.text_img_gen = text_img_gen
     self.num_display_words = num_display_words
-    os.makedirs(self.output_dir)
+    if not os.path.exists(self.output_dir):
+      os.makedirs(self.output_dir)
 
   def show_edit_distance(self, num):
     num_left = num
@@ -342,7 +353,7 @@ if __name__ == '__main__':
   ap = argparse.ArgumentParser()
   ap.add_argument("-e", "--epoch", type = int, default = 200,
     help="num of epoch")
-  ap.add_argument("-i", "--input", type = str,
+  ap.add_argument("-i", "--input", type = str, default = '',
     help="path to the input model")
   ap.add_argument("-o", "--output", required=True, type = str,
     help="output dir")
@@ -360,12 +371,12 @@ if __name__ == '__main__':
   nb_epoch = args['epoch']
   minibatch_size = 64
 
-  time_steps = image_width / (pool_size_1 * pool_size_2)
+  time_steps = pool_size_1 * pool_size_2
   iam = TextImageGenerator(time_steps, minibatch_size)
   iam.read_iam()
 
   base_model = create_model(image_width, image_height, args['dropout1'], args['dropout2'])
-  if 'input' in args:
+  if args['input']:
     base_model.load_weights(args['input'])
 
   input_data = base_model.input
@@ -381,7 +392,7 @@ if __name__ == '__main__':
   lr = args['learning']
   decay = args['decay']
   # clipnorm seems to speeds up convergence
-  clipnorm = 5
+  clipnorm = 10
   sgd = SGD(lr=lr, decay=decay, momentum=0.9, nesterov=True, clipnorm=clipnorm)
 
   model = Model(input=[input_data, labels, input_length, label_length], output=[loss_out])
