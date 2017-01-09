@@ -302,11 +302,12 @@ class VizCallback(keras.callbacks.Callback):
       print('Truth = \'%s\' Decoded = \'%s\'' % (word_batch['source_str'][i], res[i]))
 
 # Network parameters
-conv_num_filters = 16
+conv_num_filters = [16, 32, 64, 64, 128]
 filter_size = 3
-pool_size_1 = 4
-pool_size_2 = 2
-time_dense_size = 32
+pool_sizes = [2, 2, 2]
+pool_size = 2*2*2
+
+time_dense_size = 256
 rnn_size = 512
 
 def create_model(image_width, image_height, dropout1 = 0, dropout2 = 0):
@@ -316,18 +317,31 @@ def create_model(image_width, image_height, dropout1 = 0, dropout2 = 0):
     input_shape = (image_height, image_width, 1)
 
   act = 'relu'
+  border_mode = 'same'
   input_data = Input(name='the_input', shape=input_shape, dtype='float32')
-  inner = Convolution2D(conv_num_filters, filter_size, filter_size, border_mode='same',
-                        activation=act, name='conv1')(input_data)
-  inner = MaxPooling2D(pool_size=(pool_size_1, pool_size_1), name='max1')(inner)
-  inner = BatchNormalization()(inner)
-  inner = Convolution2D(conv_num_filters, filter_size, filter_size, border_mode='same',
-                        activation=act, name='conv2')(inner)
-  inner = MaxPooling2D(pool_size=(pool_size_2, pool_size_2), name='max2')(inner)
-  inner = BatchNormalization()(inner)
+  cnn0      = Convolution2D( conv_num_filters[0], 3, 3, border_mode=border_mode, activation='relu', name='cnn0')(input_data)
+  pool0     = MaxPooling2D(pool_size=(2, 2), name='pool0')(cnn0)
+  cnn1      = Convolution2D(conv_num_filters[1], 3, 3, border_mode=border_mode, activation='relu', name='cnn1')(pool0)
+  pool1     = MaxPooling2D(pool_size=(2, 2), name='pool1')(cnn1)
+  cnn2      = Convolution2D(conv_num_filters[2], 3, 3, border_mode=border_mode, activation='relu', name='cnn2')(pool1)
+  BN0       = BatchNormalization(mode=0, axis=1, name='BN0')(cnn2)
+  cnn3      = Convolution2D(conv_num_filters[3], 3, 3, border_mode=border_mode, activation='relu', name='cnn3')(BN0)
+  pool2     = MaxPooling2D(pool_size=(2, 2), name='pool2')(cnn3)
+  cnn4      = Convolution2D(conv_num_filters[4], 3, 3, border_mode=border_mode, activation='relu', name='cnn4')(pool2)
+  BN1       = BatchNormalization(mode=0, axis=1, name='BN1')(cnn4)
+  inner = BN1
+
+  # inner = Convolution2D(conv_num_filters[0], filter_size, filter_size, border_mode='same',
+  #                       activation=act, name='conv1')(input_data)
+  # inner = MaxPooling2D(pool_size=(pool_size[0], pool_size[0]), name='max1')(inner)
+  # inner = BatchNormalization()(inner)
+  # inner = Convolution2D(conv_num_filters, filter_size, filter_size, border_mode='same',
+  #                       activation=act, name='conv2')(inner)
+  # inner = MaxPooling2D(pool_size=(pool_size_2, pool_size_2), name='max2')(inner)
+  # inner = BatchNormalization()(inner)
   inner = Permute(dims=(2, 1, 3), name='permute')(inner)
 
-  conv_to_rnn_dims = (image_width / (pool_size_1 * pool_size_2), (image_height / (pool_size_1 * pool_size_2)) * conv_num_filters)
+  conv_to_rnn_dims = (image_width / (pool_size), (image_height / (pool_size)) * conv_num_filters[-1])
   inner = Reshape(target_shape=conv_to_rnn_dims, name='reshape')(inner)
 
   # cuts down input size going into RNN:
@@ -339,7 +353,7 @@ def create_model(image_width, image_height, dropout1 = 0, dropout2 = 0):
   # GRU seems to work as well, if not better than LSTM:
   gru_1 = GRU(rnn_size, return_sequences=True, name='gru1', dropout_W = dropout2, dropout_U = dropout2)(inner)
   gru_1b = GRU(rnn_size, return_sequences=True, go_backwards=True, name='gru1_b', dropout_W = dropout2, dropout_U = dropout2)(inner)
-  gru1_merged = merge([gru_1, gru_1b], mode='sum')
+  gru1_merged = merge([gru_1, gru_1b], mode='concat')
   gru_2 = GRU(rnn_size, return_sequences=True, name='gru2', dropout_W = dropout2, dropout_U = dropout2)(gru1_merged)
   gru_2b = GRU(rnn_size, return_sequences=True, go_backwards=True, dropout_W = dropout2, dropout_U = dropout2)(gru1_merged)
 
@@ -371,8 +385,7 @@ if __name__ == '__main__':
   nb_epoch = args['epoch']
   minibatch_size = 64
 
-  time_steps = pool_size_1 * pool_size_2
-  iam = TextImageGenerator(time_steps, minibatch_size)
+  iam = TextImageGenerator(pool_size, minibatch_size)
   iam.read_iam()
 
   base_model = create_model(image_width, image_height, args['dropout1'], args['dropout2'])
