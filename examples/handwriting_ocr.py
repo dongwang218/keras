@@ -80,7 +80,7 @@ class TextImageGenerator(keras.callbacks.Callback):
 
   def get_ordered_chars(self):
     chars = sorted(self.labels.items(), key = lambda x: x[1])
-    return [x[0] for x in chars] + [' ']
+    return [x[0] for x in chars]
 
   def read_one_dataset(self, dataset):
     print('reading %s' % dataset)
@@ -249,16 +249,17 @@ def ctc_lambda_func(args):
 # For a real OCR application, this should be beam search with a dictionary
 # and language model.  For this example, best path is sufficient.
 
-def decode_batch(test_func, word_batch, ordered_chars):
+def decode_batch(test_func, word_batch, input_length, ordered_chars):
   out = test_func([word_batch, 0])[0] if test_func else word_batch
   ret = []
   for j in range(out.shape[0]):
-    out_best = list(np.argmax(out[j, :], 1))
+    out_best = list(np.argmax(out[j, :input_length[j]], 1))
     out_best = [k for k, g in itertools.groupby(out_best)]
-    # 26 is space, 27 is CTC blank char
+    # 85 is CTC blank char
     outstr = ''
     for c in out_best:
-      outstr += ordered_chars[c]
+      if c < ouput_size:
+        outstr += ordered_chars[c]
     ret.append(outstr)
   return ret
 
@@ -281,7 +282,7 @@ class VizCallback(keras.callbacks.Callback):
     while num_left > 0:
       word_batch = next(self.text_img_gen)[0]
       num_proc = min(word_batch['the_input'].shape[0], num_left)
-      decoded_res = decode_batch(self.test_func, word_batch['the_input'][0:num_proc], self.ordered_chars)
+      decoded_res = decode_batch(self.test_func, word_batch['the_input'][0:num_proc], word_batch['input_length'][0:num_proc], self.ordered_chars)
       for j in range(0, num_proc):
         edit_dist = editdistance.eval(decoded_res[j], word_batch['source_str'][j])
         mean_ed += float(edit_dist)
@@ -296,7 +297,7 @@ class VizCallback(keras.callbacks.Callback):
     self.model.save_weights(os.path.join(self.output_dir, 'weights%02d.h5' % epoch))
     self.show_edit_distance(256)
     word_batch = next(self.text_img_gen)[0]
-    res = decode_batch(self.test_func, word_batch['the_input'][0:self.num_display_words], self.ordered_chars)
+    res = decode_batch(self.test_func, word_batch['the_input'][0:self.num_display_words], word_batch['input_length'][0:self.num_display_words], self.ordered_chars)
 
     for i in range(self.num_display_words):
       print('Truth = \'%s\' Decoded = \'%s\'' % (word_batch['source_str'][i], res[i]))
