@@ -34,7 +34,7 @@ import cPickle as pickle
 np.random.seed(55)
 
 image_height = 64 #128
-image_width = 512 # int(sys.argv[1]) # 1024
+image_width = 200 # int(sys.argv[1]) # 1024
 output_size = 63
 
 # Uses generator functions to supply train/test with
@@ -86,7 +86,11 @@ class TextImageGenerator(keras.callbacks.Callback):
     """foreground is True"""
     height, imageWidth = bool_arr.shape
     assert height == image_height
-    assert imageWidth <= image_width
+    if imageWidth > image_width:
+      image = Image.fromarray(bool_arr.astype(np.uint8)*255).resize((image_width, image_height))
+      bw = np.asarray(image)
+      bool_arr = bw > 128
+      imageWidth = image_width
     standard_image = np.zeros((image_height, image_width), dtype = np.float)
     x = 0 #int(np.random.uniform(0, (image_width - imageWidth)))
     standard_image[:, x:(x+imageWidth)] = bool_arr.astype(np.float)
@@ -182,11 +186,12 @@ def decode_batch(test_func, word_batch, input_length, ordered_chars):
   ret = []
   for j in range(out.shape[0]):
     out_best = list(np.argmax(out[j, :input_length[j]], 1))
+    #print('out_best', out_best)
     out_best = [k for k, g in itertools.groupby(out_best)]
     # 85 is CTC blank char
     outstr = ''
     for c in out_best:
-      if c < output_size:
+      if c < output_size-1:
         outstr += ordered_chars[c]
     ret.append(outstr)
   return ret

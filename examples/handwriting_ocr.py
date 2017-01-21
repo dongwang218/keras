@@ -258,7 +258,7 @@ def decode_batch(test_func, word_batch, input_length, ordered_chars):
     # 85 is CTC blank char
     outstr = ''
     for c in out_best:
-      if c < ouput_size:
+      if c < output_size-1:
         outstr += ordered_chars[c]
     ret.append(outstr)
   return ret
