@@ -34,8 +34,36 @@ import cPickle as pickle
 np.random.seed(55)
 
 image_height = 64 #128
-image_width = 200 # int(sys.argv[1]) # 1024
 output_size = 63
+BORDER_SIZE = 4
+
+def speckle(img):
+  severity = np.random.uniform(0, 0.6)
+  blur = ndimage.gaussian_filter(np.random.randn(*img.shape) * severity, 1)
+  img_speck = (img + (blur * (img != 1)))
+  img_speck[img_speck > 1] = 1
+  img_speck[img_speck <= 0] = 0
+  return img_speck
+
+def read_image(bool_arr, isTrain, add_noise, image_width):
+  """foreground is True, add border to top and bottom, add random speckle if add_noise"""
+  raw_height, raw_width = bool_arr.shape
+  #assert raw_height == image_height
+  new_height = image_height - 2 * BORDER_SIZE
+  new_width = min(image_width - 2 * BORDER_SIZE, int(raw_width / float(raw_height) * new_height))
+  image = Image.fromarray(bool_arr.astype(np.uint8)*255).resize((new_width, new_height))
+  if isTrain and add_noise:
+    image = image.rotate(np.random.uniform(-3, 3))
+    y = int(np.random.uniform(0, 2*BORDER_SIZE))
+    x = int(np.random.uniform(0, 2*BORDER_SIZE))
+  else:
+    x = 0
+    y = BORDER_SIZE
+  standard_image = np.zeros((image_height, image_width), dtype = np.float)
+  standard_image[y:(y+new_height), x:(x+new_width)] = np.asarray(image) / 255.0
+  if isTrain and add_noise:
+    standard_image = speckle(standard_image)
+  return (standard_image, new_width + x)
 
 # Uses generator functions to supply train/test with
 # data. Image renderings are text are created on the fly
@@ -43,8 +71,9 @@ output_size = 63
 
 class TextImageGenerator(keras.callbacks.Callback):
 
-  def __init__(self, downsample_width, minibatch_size):
-
+  def __init__(self, downsample_width, minibatch_size, image_width, add_noise):
+    self.add_noise = add_noise
+    self.image_width = image_width
     self.max_image_width = 0
     self.labels = {}
     self.trainset = []
@@ -82,25 +111,11 @@ class TextImageGenerator(keras.callbacks.Callback):
     self.max_line_length = max(max([len(x[1]) for x in self.trainset]), max([len(x[1]) for x in self.valset]))
     print('iam: trainset %d, valset %d, max_line_length %d' % (self.get_num_trainset(), self.get_num_valset(), self.max_line_length))
 
-  def read_image(self, bool_arr, isTrain):
-    """foreground is True"""
-    height, imageWidth = bool_arr.shape
-    assert height == image_height
-    if imageWidth > image_width:
-      image = Image.fromarray(bool_arr.astype(np.uint8)*255).resize((image_width, image_height))
-      bw = np.asarray(image)
-      bool_arr = bw > 128
-      imageWidth = image_width
-    standard_image = np.zeros((image_height, image_width), dtype = np.float)
-    x = 0 #int(np.random.uniform(0, (image_width - imageWidth)))
-    standard_image[:, x:(x+imageWidth)] = bool_arr.astype(np.float)
-    return (standard_image, imageWidth)
-
   # each time an image is requested from train/val/test, a new random
   # painting of the text is performed
   def get_batch(self, size, train):
     assert K.image_dim_ordering() == 'tf'
-    X_data = np.ones([size, image_height, image_width, 1])
+    X_data = np.ones([size, image_height, self.image_width, 1])
 
     labels = np.ones([size, self.max_line_length])
     input_length = np.zeros([size, 1])
@@ -122,7 +137,7 @@ class TextImageGenerator(keras.callbacks.Callback):
         self.testset_index = (self.testset_index + 1) % len(self.testset)
         index = self.testset_index
 
-      inputs, width = self.read_image(data[index][0], train == 'train')
+      inputs, width = self.read_image(data[index][0], train == 'train', self.add_noise, self.image_width)
       label_len = len(data[index][1])
       data_len = int(math.ceil(width / self.downsample_width))
       if data_len <= label_len:
@@ -244,7 +259,7 @@ pool_size = 2*2*2
 time_dense_size = 256
 rnn_size = 512
 
-def create_model(image_width, image_height, dropout1 = 0, dropout2 = 0):
+def create_model(image_width, image_height, dropout_rest = 0, dropout_gru = 0):
   if K.image_dim_ordering() == 'th':
     input_shape = (1, image_height, image_width)
   else:
@@ -253,15 +268,15 @@ def create_model(image_width, image_height, dropout1 = 0, dropout2 = 0):
   act = 'relu'
   border_mode = 'same'
   input_data = Input(name='the_input', shape=input_shape, dtype='float32')
-  cnn0      = Convolution2D( conv_num_filters[0], 3, 3, border_mode=border_mode, activation='relu', name='cnn0')(input_data)
+  cnn0      = Convolution2D( conv_num_filters[0], 3, 3, border_mode=border_mode, activation='relu', init='he_normal', name='cnn0')(input_data)
   pool0     = MaxPooling2D(pool_size=(2, 2), name='pool0')(cnn0)
-  cnn1      = Convolution2D(conv_num_filters[1], 3, 3, border_mode=border_mode, activation='relu', name='cnn1')(pool0)
+  cnn1      = Convolution2D(conv_num_filters[1], 3, 3, border_mode=border_mode, activation='relu', init='he_normal', name='cnn1')(pool0)
   pool1     = MaxPooling2D(pool_size=(2, 2), name='pool1')(cnn1)
-  cnn2      = Convolution2D(conv_num_filters[2], 3, 3, border_mode=border_mode, activation='relu', name='cnn2')(pool1)
+  cnn2      = Convolution2D(conv_num_filters[2], 3, 3, border_mode=border_mode, activation='relu', init='he_normal', name='cnn2')(pool1)
   BN0       = BatchNormalization(mode=0, axis=1, name='BN0')(cnn2)
-  cnn3      = Convolution2D(conv_num_filters[3], 3, 3, border_mode=border_mode, activation='relu', name='cnn3')(BN0)
+  cnn3      = Convolution2D(conv_num_filters[3], 3, 3, border_mode=border_mode, activation='relu', init='he_normal', name='cnn3')(BN0)
   pool2     = MaxPooling2D(pool_size=(2, 2), name='pool2')(cnn3)
-  cnn4      = Convolution2D(conv_num_filters[4], 3, 3, border_mode=border_mode, activation='relu', name='cnn4')(pool2)
+  cnn4      = Convolution2D(conv_num_filters[4], 3, 3, border_mode=border_mode, activation='relu', init='he_normal', name='cnn4')(pool2)
   BN1       = BatchNormalization(mode=0, axis=1, name='BN1')(cnn4)
   inner = BN1
 
@@ -279,20 +294,21 @@ def create_model(image_width, image_height, dropout1 = 0, dropout2 = 0):
   inner = Reshape(target_shape=conv_to_rnn_dims, name='reshape')(inner)
 
   # cuts down input size going into RNN:
-  inner = TimeDistributed(Dense(time_dense_size, activation=act, name='dense1'))(inner)
+  inner = TimeDistributed(Dense(time_dense_size, activation=act, init='he_normal', name='dense1'))(inner)
 
-  inner = Dropout(dropout1)(inner)
+  inner = Dropout(dropout_rest)(inner)
 
   # Two layers of bidirecitonal GRUs
   # GRU seems to work as well, if not better than LSTM:
-  gru_1 = GRU(rnn_size, return_sequences=True, name='gru1', dropout_W = dropout2, dropout_U = dropout2)(inner)
-  gru_1b = GRU(rnn_size, return_sequences=True, go_backwards=True, name='gru1_b', dropout_W = dropout2, dropout_U = dropout2)(inner)
+  gru_1 = GRU(rnn_size, return_sequences=True, init='he_normal', name='gru1', dropout_W = dropout_gru, dropout_U = dropout_gru)(inner)
+  gru_1b = GRU(rnn_size, return_sequences=True, go_backwards=True, init='he_normal', name='gru1_b', dropout_W = dropout_gru, dropout_U = dropout_gru)(inner)
   gru1_merged = merge([gru_1, gru_1b], mode='concat')
-  gru_2 = GRU(rnn_size, return_sequences=True, name='gru2', dropout_W = dropout2, dropout_U = dropout2)(gru1_merged)
-  gru_2b = GRU(rnn_size, return_sequences=True, go_backwards=True, dropout_W = dropout2, dropout_U = dropout2)(gru1_merged)
+  gru_2 = GRU(rnn_size, return_sequences=True, init='he_normal', name='gru2', dropout_W = dropout_gru, dropout_U = dropout_gru)(gru1_merged)
+  gru_2b = GRU(rnn_size, return_sequences=True, go_backwards=True, init='he_normal', name='gru2_b', dropout_W = dropout_gru, dropout_U = dropout_gru)(gru1_merged)
 
   # transforms RNN output to character activations:
-  inner = TimeDistributed(Dense(output_size, name='dense2'))(merge([gru_2, gru_2b], mode='concat'))
+  inner = TimeDistributed(Dense(output_size, init='he_normal', name='dense2'))(merge([gru_2, gru_2b], mode='concat'))
+  inner = Dropout(dropout_rest)(inner)
   y_pred = Activation('softmax', name='softmax')(inner)
   return Model(input=[input_data], output=y_pred)
 
@@ -309,14 +325,19 @@ if __name__ == '__main__':
     help="learning rate")
   ap.add_argument("-d", "--decay", type = float, default = 3e-7,
     help="learning rate decay")
-  ap.add_argument("--dropout1", type = float, default = 0.25,
+  ap.add_argument("--dropout", type = float, default = 0.25,
     help="dropout 1")
-  ap.add_argument("--dropout2", type = float, default = 0.1,
+  ap.add_argument("--dropout_gru", type = float, default = 0.1,
     help="dropout 2")
   ap.add_argument("--train_file", type = str, default = 'train_file.pkl',
                   help="path to trainingset")
   ap.add_argument("--val_file", type = str, default = 'val_file.pkl',
                   help="path to trainingset")
+  ap.add_argument("--image_width", type = int, default = 200,
+                  help="image width")
+  ap.add_argument("--add_noise", type = str, default = 'False',
+                  help="whether to add noise to training images")
+
 
   args = vars(ap.parse_args())
 
@@ -324,10 +345,10 @@ if __name__ == '__main__':
   nb_epoch = args['epoch']
   minibatch_size = 64
 
-  iam = TextImageGenerator(pool_size, minibatch_size)
+  iam = TextImageGenerator(pool_size, minibatch_size, args['image_width'], args['add_noise'] in ['True', 'true'])
   iam.read_iam(args['train_file'], args['val_file'])
 
-  base_model = create_model(image_width, image_height, args['dropout1'], args['dropout2'])
+  base_model = create_model(args['image_width'], image_height, args['dropout'], args['dropout_gru'])
   if args['input']:
     base_model.load_weights(args['input'])
 
