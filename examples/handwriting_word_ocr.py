@@ -34,7 +34,7 @@ import cPickle as pickle
 np.random.seed(55)
 
 image_height = 64 #128
-output_size = 63
+output_size = 85
 BORDER_SIZE = 4
 
 def speckle(img):
@@ -85,8 +85,6 @@ class TextImageGenerator(keras.callbacks.Callback):
     self.testset_index = 0
     self.downsample_width = downsample_width
     self.minibatch_size = minibatch_size
-    label_ids = range(48, 57+1) + range(65, 90+1) + range(97, 122+1)
-    self.labels = dict([(chr(ch), index) for index, ch in enumerate(label_ids)])
 
   def get_output_size(self):
     size = len(self.labels) + 1
@@ -105,7 +103,9 @@ class TextImageGenerator(keras.callbacks.Callback):
 
   # num_words can be independent of the epoch size due to the use of generators
   # as max_string_len grows, num_words can grow
-  def read_iam(self, train_file, val_file):
+  def read_iam(self, train_file, val_file, label_file):
+    self.labels = pickle.load(open(label_file))
+    print('total labels', self.get_output_size())
     self.trainset = pickle.load(open(train_file))
     self.valset = pickle.load(open(val_file))
     self.max_line_length = max(max([len(x[1]) for x in self.trainset]), max([len(x[1]) for x in self.valset]))
@@ -137,11 +137,11 @@ class TextImageGenerator(keras.callbacks.Callback):
         self.testset_index = (self.testset_index + 1) % len(self.testset)
         index = self.testset_index
 
-      inputs, width = self.read_image(data[index][0], train == 'train', self.add_noise, self.image_width)
+      inputs, width = read_image(data[index][0], train == 'train', self.add_noise, self.image_width)
       label_len = len(data[index][1])
       data_len = int(math.ceil(width / self.downsample_width))
       if data_len <= label_len:
-        print('Warning: image too short', data_len, label_len, data[index])
+        print('Warning: image too short', data_len, label_len, data[index][1])
         continue
 
       X_data[i, :, :, 0] = inputs
@@ -329,6 +329,8 @@ if __name__ == '__main__':
     help="dropout 1")
   ap.add_argument("--dropout_gru", type = float, default = 0.1,
     help="dropout 2")
+  ap.add_argument("--label_file", type = str, default = 'label_file.pkl',
+                  help="path to labels")
   ap.add_argument("--train_file", type = str, default = 'train_file.pkl',
                   help="path to trainingset")
   ap.add_argument("--val_file", type = str, default = 'val_file.pkl',
@@ -346,7 +348,7 @@ if __name__ == '__main__':
   minibatch_size = 64
 
   iam = TextImageGenerator(pool_size, minibatch_size, args['image_width'], args['add_noise'] in ['True', 'true'])
-  iam.read_iam(args['train_file'], args['val_file'])
+  iam.read_iam(args['train_file'], args['val_file'], args['label_file'])
 
   base_model = create_model(args['image_width'], image_height, args['dropout'], args['dropout_gru'])
   if args['input']:
