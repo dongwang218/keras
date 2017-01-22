@@ -22,8 +22,10 @@ import keras.callbacks
 import math, glob, sys, os, re
 from PIL import Image, ImageChops
 import PIL.ImageOps
+import argparse
+import cPickle as pickle
 
-from handwriting_word_ocr import read_image, create_model, image_height, pool_size
+from handwriting_word_ocr import read_image, create_model, image_height, pool_size, decode_batch
 
 np.random.seed(55)
 
@@ -38,7 +40,7 @@ if __name__ == '__main__':
                   help="path to trainingset")
   ap.add_argument("--image_file", type = str,
                   help="path to trainingset")
-  ap.add_argument("--image_width", type = int, default = 600
+  ap.add_argument("--image_width", type = int, default = 600,
                   help="path to trainingset")
 
   args = vars(ap.parse_args())
@@ -47,7 +49,7 @@ if __name__ == '__main__':
 
 # assuming image is alread black (0) /white (255)
   bool_arr = np.asarray(Image.open(args['image_file']).convert('L')) < 128
-  input_img, width = read_image(bool_arr, False, False, bool_arr, args['image_width'])
+  input_img, width = read_image(bool_arr, False, False, args['image_width'])
   input_img = np.expand_dims(input_img, 0)
   input_img = np.expand_dims(input_img, 3)
 
@@ -61,7 +63,7 @@ if __name__ == '__main__':
     print model.output
     print model.input
 
-    probability = sess.run(model.output, {model.input: inputs})
+    probability = sess.run(model.output, {model.input: input_img})
 
-    sentence = decode_batch(None, probability, input_length = np.array([int(math.ceil(width / pool_size))]), ordered_chars)[0]
+    sentence = decode_batch(None, probability, np.array([int(math.ceil(width / pool_size))]), ordered_chars)[0]
     print sentence
