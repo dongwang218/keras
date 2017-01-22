@@ -23,49 +23,45 @@ import math, glob, sys, os, re
 from PIL import Image, ImageChops
 import PIL.ImageOps
 
-from handwriting_ocr import *
+from handwriting_word_ocr import read_image, create_model, image_height, pool_size
 
 np.random.seed(55)
 
-def get_ordered_chars():
-  labels = {}
-  print "Loading labels"
-  for fileName in glob.glob('ascii/*/*/*.txt'):
-    asciiFile = open(fileName, 'r')
-    text = re.sub(r'.*[\r\n]+CSR:\s*[\r\n]+', '', asciiFile.read(), 1, re.DOTALL)
-    for char in text:
-      if char == '\n' or char == '\r': continue
-      if char not in labels:
-        labels[char] = len(labels)
-      asciiFile.close()
-  chars = sorted(labels.items(), key = lambda x: x[1])
-  return [x[0] for x in chars] + [' ']
-
-K.set_learning_phase(0)
-
-weights_file = sys.argv[1]
-image_file = sys.argv[2]
-truth = sys.argv[3]
-
-ordered_chars = get_ordered_chars()
-ordered_chars[-1] = ''
-inputs = read_image(image_file, False, True).astype(np.float32)
-image_height, image_width = inputs.shape[:2]
-inputs = np.expand_dims(inputs, 0)
-inputs = np.expand_dims(inputs, 3)
-
-with K.tf.Session() as sess:
-  model = create_model(image_width, image_height)
-  model.load_weights(weights_file)
-  print model.output
-  print model.input
-
-  probability = sess.run(model.output, {model.input: inputs})
-  #print probability
-  sentence = decode_batch(None, probability, ordered_chars)[0]
-  edit_dist = editdistance.eval(sentence, truth)
-  print truth
-  print sentence
-  print edit_dist
-
 #K.tf.ConfigProto
+
+if __name__ == '__main__':
+
+  ap = argparse.ArgumentParser()
+  ap.add_argument("--label_file", type = str, default = 'label_file.pkl',
+                  help="path to labels")
+  ap.add_argument("--model_file", type = str,
+                  help="path to trainingset")
+  ap.add_argument("--image_file", type = str,
+                  help="path to trainingset")
+  ap.add_argument("--image_width", type = int, default = 600
+                  help="path to trainingset")
+
+  args = vars(ap.parse_args())
+
+  K.set_learning_phase(0)
+
+# assuming image is alread black (0) /white (255)
+  bool_arr = np.asarray(Image.open(args['image_file']).convert('L')) < 128
+  input_img, width = read_image(bool_arr, False, False, bool_arr, args['image_width'])
+  input_img = np.expand_dims(input_img, 0)
+  input_img = np.expand_dims(input_img, 3)
+
+  labels = pickle.load(open(args['label_file']))
+  ordered_chars = [x[0] for x in sorted(labels.items(), key = lambda x: x[1])]
+
+
+  with K.tf.Session() as sess:
+    model = create_model(args['image_width'], image_height, 0.0, 0.0)
+    model.load_weights(args['model_file'])
+    print model.output
+    print model.input
+
+    probability = sess.run(model.output, {model.input: inputs})
+
+    sentence = decode_batch(None, probability, input_length = np.array([int(math.ceil(width / pool_size))]), ordered_chars)[0]
+    print sentence

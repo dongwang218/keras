@@ -103,11 +103,11 @@ class TextImageGenerator(keras.callbacks.Callback):
 
   # num_words can be independent of the epoch size due to the use of generators
   # as max_string_len grows, num_words can grow
-  def read_iam(self, train_file, val_file, label_file):
+  def read_iam(self, train_file, val_file, label_file, min_length, max_length):
     self.labels = pickle.load(open(label_file))
     print('total labels', self.get_output_size())
-    self.trainset = pickle.load(open(train_file))
-    self.valset = pickle.load(open(val_file))
+    self.trainset = [x for x in pickle.load(open(train_file)) if len(x[1]) >= min_length and len(x[1]) <= max_length]
+    self.valset = [x for x in pickle.load(open(val_file)) if len(x[1]) >= min_length and len(x[1]) <= max_length]
     self.max_line_length = max(max([len(x[1]) for x in self.trainset]), max([len(x[1]) for x in self.valset]))
     print('iam: trainset %d, valset %d, max_line_length %d' % (self.get_num_trainset(), self.get_num_valset(), self.max_line_length))
 
@@ -339,6 +339,10 @@ if __name__ == '__main__':
                   help="image width")
   ap.add_argument("--add_noise", type = str, default = 'False',
                   help="whether to add noise to training images")
+  ap.add_argument("--min_length", type = int, default = 0,
+                  help="minimum length of text to train/val one")
+  ap.add_argument("--max_length", type = int, default = 1000,
+                  help="maximum length of text to train/val one")
 
 
   args = vars(ap.parse_args())
@@ -348,7 +352,7 @@ if __name__ == '__main__':
   minibatch_size = 64
 
   iam = TextImageGenerator(pool_size, minibatch_size, args['image_width'], args['add_noise'] in ['True', 'true'])
-  iam.read_iam(args['train_file'], args['val_file'], args['label_file'])
+  iam.read_iam(args['train_file'], args['val_file'], args['label_file'], args['min_length'], args['max_length'])
 
   base_model = create_model(args['image_width'], image_height, args['dropout'], args['dropout_gru'])
   if args['input']:

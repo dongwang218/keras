@@ -13,7 +13,7 @@ import tensorflow as tf
 from tensorflow.python.framework import tensor_shape, graph_util
 from tensorflow.python.platform import gfile
 
-from handwriting_ocr import *
+from handwriting_word_ocr import *
 
 np.random.seed(55)
 
@@ -29,7 +29,7 @@ ap.add_argument("--width", type = int, default = 456,
 args = vars(ap.parse_args())
 
 with K.tf.Session() as sess:
-  model = create_model(args['width'], image_height)
+  model = create_model(args['width'], image_height, 0.0, 0.0)
   model.load_weights(args['input'])
   print model.output
   print model.input
