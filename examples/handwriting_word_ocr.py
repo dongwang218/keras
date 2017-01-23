@@ -54,10 +54,10 @@ def read_image(bool_arr, isTrain, add_noise, image_width):
   image = Image.fromarray(bool_arr.astype(np.uint8)*255).resize((new_width, new_height))
   if isTrain and add_noise:
     image = image.rotate(np.random.uniform(-3, 3))
-    y = int(np.random.uniform(0, 2*BORDER_SIZE))
+    y = int(np.random.uniform(BORDER_SIZE, 2*BORDER_SIZE))
     x = int(np.random.uniform(0, 2*BORDER_SIZE))
   else:
-    x = 0
+    x = BORDER_SIZE
     y = BORDER_SIZE
   standard_image = np.zeros((image_height, image_width), dtype = np.float)
   standard_image[y:(y+new_height), x:(x+new_width)] = np.asarray(image) / 255.0
@@ -139,8 +139,8 @@ class TextImageGenerator(keras.callbacks.Callback):
 
       inputs, width = read_image(data[index][0], train == 'train', self.add_noise, self.image_width)
       label_len = len(data[index][1])
-      data_len = int(math.ceil(width / self.downsample_width))
-      if data_len <= label_len:
+      data_len = int(math.ceil(float(width) / self.downsample_width))
+      if data_len < label_len:
         print('Warning: image too short', data_len, label_len, data[index][1])
         continue
 
