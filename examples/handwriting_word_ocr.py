@@ -243,8 +243,8 @@ class VizCallback(keras.callbacks.Callback):
 
   def on_epoch_end(self, epoch, logs={}):
     optimizer = self.model.optimizer
-    lr = K.eval(optimizer.lr * (1. / (1. + optimizer.decay * optimizer.iterations)))
-    print('\nLR: {:.6f}\n'.format(lr))
+    #lr = K.eval(optimizer.lr * (1. / (1. + optimizer.decay * optimizer.iterations)))
+    #print('\nLR: {:.6f}\n'.format(lr))
 
     self.model.save_weights(os.path.join(self.output_dir, 'weights%02d.h5' % epoch))
     self.show_edit_distance(256)
@@ -376,7 +376,8 @@ if __name__ == '__main__':
   decay = args['decay']
   # clipnorm seems to speeds up convergence
   clipnorm = 10
-  sgd = SGD(lr=lr, decay=decay, momentum=0.9, nesterov=True, clipnorm=clipnorm)
+  #sgd = SGD(lr=lr, decay=decay, momentum=0.9, nesterov=True, clipnorm=clipnorm)
+  sgd = keras.optimizers.Nadam(lr=0.002, beta_1=0.9, beta_2=0.999, epsilon=1e-08, schedule_decay=0.004)
 
   model = Model(input=[input_data, labels, input_length, label_length], output=[loss_out])
   model.summary()
