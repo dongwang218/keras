@@ -54,7 +54,7 @@ def read_image(bool_arr, isTrain, add_noise, image_width):
   image = Image.fromarray(bool_arr.astype(np.uint8)*255).resize((new_width, new_height))
   if isTrain and add_noise:
     image = image.rotate(np.random.uniform(-3, 3))
-    y = int(np.random.uniform(BORDER_SIZE, 2*BORDER_SIZE))
+    y = int(np.random.uniform(0, 2*BORDER_SIZE))
     x = int(np.random.uniform(0, 2*BORDER_SIZE))
   else:
     x = BORDER_SIZE
