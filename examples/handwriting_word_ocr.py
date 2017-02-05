@@ -36,7 +36,7 @@ np.random.seed(55)
 image_height = 64 #128
 output_size = 85
 BORDER_SIZE_Y = 0
-BORDER_SIZE_X = 15
+BORDER_SIZE_X = 16
 
 def speckle(img):
   severity = np.random.uniform(0, 0.6)
@@ -64,7 +64,8 @@ def read_image(bool_arr, isTrain, add_noise, image_width):
   standard_image[y:(y+new_height), x:(x+new_width)] = np.asarray(image) / 255.0
   if isTrain and add_noise:
     standard_image = speckle(standard_image)
-  return (standard_image, new_width + 2*BORDER_SIZE_X)
+  total_width = new_width + 2*BORDER_SIZE_X
+  return (standard_image, total_width)
 
 # Uses generator functions to supply train/test with
 # data. Image renderings are text are created on the fly
