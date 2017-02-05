@@ -35,7 +35,8 @@ np.random.seed(55)
 
 image_height = 64 #128
 output_size = 85
-BORDER_SIZE = 4
+BORDER_SIZE_Y = 0
+BORDER_SIZE_X = 15
 
 def speckle(img):
   severity = np.random.uniform(0, 0.6)
@@ -49,21 +50,21 @@ def read_image(bool_arr, isTrain, add_noise, image_width):
   """foreground is True, add border to top and bottom, add random speckle if add_noise"""
   raw_height, raw_width = bool_arr.shape
   #assert raw_height == image_height
-  new_height = image_height - 2 * BORDER_SIZE
-  new_width = min(image_width - 2 * BORDER_SIZE, int(raw_width / float(raw_height) * new_height))
+  new_height = image_height - 2 * BORDER_SIZE_Y
+  new_width = min(image_width - 2 * BORDER_SIZE_X, int(raw_width / float(raw_height) * new_height))
   image = Image.fromarray(bool_arr.astype(np.uint8)*255).resize((new_width, new_height))
   if isTrain and add_noise:
     image = image.rotate(np.random.uniform(-3, 3))
-    y = int(np.random.uniform(0, 2*BORDER_SIZE))
-    x = int(np.random.uniform(0, 2*BORDER_SIZE))
+    y = 0 if BORDER_SIZE_Y > 0 else int(np.random.uniform(0, 2*BORDER_SIZE_Y))
+    x = int(np.random.uniform(0, 2*BORDER_SIZE_X))
   else:
-    x = BORDER_SIZE
-    y = BORDER_SIZE
+    x = BORDER_SIZE_X
+    y = BORDER_SIZE_Y
   standard_image = np.zeros((image_height, image_width), dtype = np.float)
   standard_image[y:(y+new_height), x:(x+new_width)] = np.asarray(image) / 255.0
   if isTrain and add_noise:
     standard_image = speckle(standard_image)
-  return (standard_image, new_width + x)
+  return (standard_image, new_width + 2*BORDER_SIZE_X)
 
 # Uses generator functions to supply train/test with
 # data. Image renderings are text are created on the fly
