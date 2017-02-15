@@ -202,7 +202,7 @@ def decode_batch(test_func, word_batch, input_length, ordered_chars):
   out = test_func([word_batch, 0])[0] if test_func else word_batch
   ret = []
   for j in range(out.shape[0]):
-    out_best = list(np.argmax(out[j, :input_length[j]], 1))
+    out_best = list(np.argmax(out[j, :int(input_length[j][0])], 1))
     #print('out_best', out_best)
     out_best = [k for k, g in itertools.groupby(out_best)]
     # 85 is CTC blank char
